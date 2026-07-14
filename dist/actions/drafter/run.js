@@ -27,7 +27,7 @@ var commonConfigSchema = object({
 	*/
 	"include-pre-releases": stringbool().or(boolean()).optional(),
 	/**
-	* The release target, i.e. branch or commit SHA it should point to. Defaults to the branch that release-drafter runs for, e.g. `master` when configured to run on pushes to `master`.
+	* The release target, i.e. branch, commit SHA, or fully qualified tag or pull request ref it should point to. Tag and pull request refs are resolved to commit SHAs. Defaults to the branch that release-drafter runs for, e.g. `master` when configured to run on pushes to `master`.
 	*/
 	commitish: string().optional(),
 	/**
@@ -2444,7 +2444,7 @@ var last_not_found_default = "> [!WARNING]\n> Release Drafter could not find a p
 *
 * Previously known as `generateReleaseInfo`.
 */
-var buildReleasePayload = (params) => {
+var buildReleasePayload = async (params) => {
 	const { commits, config, input, lastRelease, pullRequests } = params;
 	info(`Building release payload and body...`);
 	const sortedPullRequests = sortPullRequests({
@@ -2503,7 +2503,7 @@ var buildReleasePayload = (params) => {
 			versionInfo
 		}),
 		body,
-		targetCommitish: parseCommitishForRelease(config.commitish),
+		targetCommitish: await parseCommitishForRelease(config.commitish),
 		prerelease: config.prerelease,
 		make_latest: config.latest,
 		draft: !input.publish,
@@ -4362,15 +4362,22 @@ var main = async (params) => {
 	* 6. set action outputs
 	*/
 	const { config, input } = params;
+	const isPullRequestMergeRef = /^refs\/pull\/\d+\/merge$/.test(config.commitish);
+	const effectiveInput = isPullRequestMergeRef ? {
+		...input,
+		"dry-run": true,
+		publish: false
+	} : input;
+	if (isPullRequestMergeRef && !input["dry-run"]) warning(`${config.commitish} points to an ephemeral pull request merge commit; forcing dry-run mode and disabling publish. Set dry-run: true explicitly to suppress this warning.`);
 	const { draftRelease, lastRelease } = await findPreviousReleases(config);
 	const { commits, pullRequests } = await findPullRequests({
 		lastRelease,
 		config
 	});
-	const releasePayload = buildReleasePayload({
+	const releasePayload = await buildReleasePayload({
 		commits,
 		config,
-		input,
+		input: effectiveInput,
 		lastRelease,
 		pullRequests
 	});
@@ -4378,7 +4385,7 @@ var main = async (params) => {
 		upsertedRelease: await upsertRelease({
 			draftRelease,
 			releasePayload,
-			dryRun: input["dry-run"]
+			dryRun: effectiveInput["dry-run"]
 		}),
 		releasePayload
 	};
