@@ -22,6 +22,8 @@ export const GITLAB_IMAGE =
 const HTTP_PORT = 80
 const STARTUP_TIMEOUT_MS = 15 * 60_000
 const REQUEST_TIMEOUT_MS = 30_000
+// The disposable fixture does not need GitLab's minute-long graceful shutdown.
+const STOP_TIMEOUT_MS = 10_000
 const artifactsDirectory = resolve(
   process.env.GITLAB_TEST_ARTIFACTS ?? 'artifacts/gitlab',
 )
@@ -304,7 +306,11 @@ export const startGitLabFixture = async (): Promise<GitLabFixture> => {
         GITLAB_OMNIBUS_CONFIG: [
           "external_url 'http://localhost'",
           "letsencrypt['enable'] = false",
+          // Keep the test-only instance to the capacity exercised by conformance.
+          "gitlab_kas['enable'] = false",
           "prometheus_monitoring['enable'] = false",
+          "puma['worker_processes'] = 0",
+          "sidekiq['concurrency'] = 10",
           "gitlab_rails['usage_ping_enabled'] = false",
           "gitlab_rails['gitlab_signup_enabled'] = false",
         ].join('; '),
@@ -473,14 +479,15 @@ export const startGitLabFixture = async (): Promise<GitLabFixture> => {
       },
       async stop() {
         try {
-          await container?.stop({ timeout: 60_000 })
+          await container?.stop({ timeout: STOP_TIMEOUT_MS })
         } finally {
           await closeLogs()
         }
       },
     }
   } catch (error) {
-    if (container) await container.stop({ timeout: 60_000 }).catch(() => {})
+    if (container)
+      await container.stop({ timeout: STOP_TIMEOUT_MS }).catch(() => {})
     await closeLogs()
     throw error
   }
